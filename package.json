@@ -1,7 +1,7 @@
 {
   "name": "LC79-ultimate",
   "version": "1.0.0",
-  "description": "AI Prediction Server với MD5 tích hợp, lấy dữ liệu từ TELE68 lite-sessions",
+  "description": "AI Prediction Server với MD5 tích hợp",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
