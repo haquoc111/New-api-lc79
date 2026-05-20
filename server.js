@@ -1,29 +1,30 @@
-// server.js
-
 const express = require("express");
 const axios = require("axios");
 
 const app = express();
+
 const PORT = process.env.PORT || 3000;
 
-const API_URL =
+const API =
   "https://wtxmd52.tele68.com/v1/txmd5/lite-sessions?cp=R&cl=R&pf=web&at=2cff2322cadccdcb7afd52aa2f828f83";
 
-let history = [];
-
 /* =========================
-   HÀM PHÂN TÍCH TÀI/XỈU
+   TÀI/XỈU
 ========================= */
 
-function getTaiXiu(total) {
+function getResult(total) {
   return total >= 11 ? "tài" : "xỉu";
 }
 
-function frequencyPredict(list) {
+/* =========================
+   THUẬT TOÁN
+========================= */
+
+function trendPredict(history) {
   let tai = 0;
   let xiu = 0;
 
-  list.slice(-10).forEach((i) => {
+  history.slice(-10).forEach((i) => {
     if (i.result === "tài") tai++;
     else xiu++;
   });
@@ -31,99 +32,71 @@ function frequencyPredict(list) {
   if (tai > xiu) {
     return {
       prediction: "xỉu",
-      confidence: 65,
-    };
-  }
-
-  return {
-    prediction: "tài",
-    confidence: 65,
-  };
-}
-
-function streakPredict(list) {
-  if (list.length < 4) {
-    return {
-      prediction: "tài",
-      confidence: 50,
-    };
-  }
-
-  const last = list[list.length - 1].result;
-
-  let streak = 1;
-
-  for (let i = list.length - 2; i >= 0; i--) {
-    if (list[i].result === last) streak++;
-    else break;
-  }
-
-  if (streak >= 3) {
-    return {
-      prediction: last === "tài" ? "xỉu" : "tài",
-      confidence: 80,
-    };
-  }
-
-  return {
-    prediction: last,
-    confidence: 60,
-  };
-}
-
-function trendPredict(list) {
-  if (list.length < 6) {
-    return {
-      prediction: "tài",
-      confidence: 50,
-    };
-  }
-
-  const recent = list.slice(-6);
-
-  let score = 0;
-
-  recent.forEach((i) => {
-    if (i.result === "tài") score++;
-    else score--;
-  });
-
-  if (score > 0) {
-    return {
-      prediction: "tài",
       confidence: 70,
     };
   }
 
   return {
-    prediction: "xỉu",
+    prediction: "tài",
     confidence: 70,
   };
 }
 
-function markovPredict(list) {
-  if (list.length < 2) {
+function streakPredict(history) {
+  const last = history[history.length - 1];
+
+  let streak = 1;
+
+  for (let i = history.length - 2; i >= 0; i--) {
+    if (history[i].result === last.result) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+
+  if (streak >= 3) {
+    return {
+      prediction:
+        last.result === "tài"
+          ? "xỉu"
+          : "tài",
+      confidence: 85,
+    };
+  }
+
+  return {
+    prediction: last.result,
+    confidence: 60,
+  };
+}
+
+function markovPredict(history) {
+  if (history.length < 5) {
     return {
       prediction: "tài",
       confidence: 50,
     };
   }
 
-  const last = list[list.length - 1].result;
+  const last =
+    history[history.length - 1].result;
 
   let same = 0;
   let change = 0;
 
-  for (let i = 1; i < list.length; i++) {
-    if (list[i - 1].result === last) {
-      if (list[i].result === last) same++;
+  for (let i = 1; i < history.length; i++) {
+    if (history[i - 1].result === last) {
+      if (history[i].result === last)
+        same++;
       else change++;
     }
   }
 
   if (change > same) {
     return {
-      prediction: last === "tài" ? "xỉu" : "tài",
+      prediction:
+        last === "tài" ? "xỉu" : "tài",
       confidence: 75,
     };
   }
@@ -134,114 +107,134 @@ function markovPredict(list) {
   };
 }
 
-/* =========================
-   GỘP THUẬT TOÁN
-========================= */
-
-function superPredict(list) {
-  const algorithms = [
-    frequencyPredict(list),
-    streakPredict(list),
-    trendPredict(list),
-    markovPredict(list),
+function superPredict(history) {
+  const algos = [
+    trendPredict(history),
+    streakPredict(history),
+    markovPredict(history),
   ];
 
-  let taiScore = 0;
-  let xiuScore = 0;
+  let tai = 0;
+  let xiu = 0;
 
-  algorithms.forEach((algo) => {
-    if (algo.prediction === "tài") {
-      taiScore += algo.confidence;
+  algos.forEach((a) => {
+    if (a.prediction === "tài") {
+      tai += a.confidence;
     } else {
-      xiuScore += algo.confidence;
+      xiu += a.confidence;
     }
   });
 
-  const finalPrediction =
-    taiScore > xiuScore ? "tài" : "xỉu";
-
-  const confidence = Math.min(
-    99,
-    Math.floor(
-      Math.max(taiScore, xiuScore) /
-        algorithms.length
-    )
-  );
-
   return {
-    prediction: finalPrediction,
-    confidence,
+    prediction: tai > xiu ? "tài" : "xỉu",
+    confidence: Math.floor(
+      Math.max(tai, xiu) / algos.length
+    ),
   };
 }
 
 /* =========================
-   LOAD API
+   LOAD DATA
 ========================= */
 
-async function loadData() {
+async function getData() {
   try {
-    const response = await axios.get(API_URL, {
+    const res = await axios.get(API, {
       headers: {
         Accept: "application/json",
         "User-Agent": "Mozilla/5.0",
       },
     });
 
-    const data =
-      response.data?.data ||
-      response.data?.sessions ||
-      response.data;
+    console.log(
+      "API RESPONSE:",
+      JSON.stringify(res.data).slice(0, 500)
+    );
 
-    if (!Array.isArray(data)) {
-      return null;
+    let raw = [];
+
+    if (Array.isArray(res.data)) {
+      raw = res.data;
+    } else if (Array.isArray(res.data.data)) {
+      raw = res.data.data;
+    } else if (
+      Array.isArray(res.data.sessions)
+    ) {
+      raw = res.data.sessions;
+    } else if (
+      Array.isArray(res.data.result)
+    ) {
+      raw = res.data.result;
     }
 
-    history = data
-      .map((item) => {
-        const dices = [
-          Number(item.d1 || item.dice1 || 1),
-          Number(item.d2 || item.dice2 || 1),
-          Number(item.d3 || item.dice3 || 1),
-        ];
+    if (!raw.length) {
+      return [];
+    }
 
-        const total =
-          dices[0] + dices[1] + dices[2];
+    return raw.map((item) => {
+      const d1 = Number(
+        item.d1 ||
+          item.dice1 ||
+          item.x1 ||
+          1
+      );
 
-        return {
-          id: item.id || "s2king",
-          session:
-            item.session ||
-            item.sid ||
-            item.issue ||
-            0,
-          result: getTaiXiu(total),
-          dices,
-          total,
-        };
-      })
-      .reverse();
+      const d2 = Number(
+        item.d2 ||
+          item.dice2 ||
+          item.x2 ||
+          1
+      );
 
-    return history;
-  } catch (err) {
-    console.log("API ERROR:", err.message);
-    return null;
+      const d3 = Number(
+        item.d3 ||
+          item.dice3 ||
+          item.x3 ||
+          1
+      );
+
+      const total = d1 + d2 + d3;
+
+      return {
+        id: item.id || "s2king",
+        session:
+          item.session ||
+          item.issue ||
+          item.sid ||
+          0,
+        dices: [d1, d2, d3],
+        total,
+        result: getResult(total),
+      };
+    });
+  } catch (e) {
+    console.log("ERROR:", e.message);
+    return [];
   }
 }
 
 /* =========================
-   API CHÍNH
+   API
 ========================= */
 
 app.get("/", async (req, res) => {
-  const data = await loadData();
+  const history = await getData();
 
-  if (!data || data.length === 0) {
-    return res.send("Không lấy được dữ liệu");
+  if (!history.length) {
+    return res.send(`
+Không lấy được dữ liệu
+
+Kiểm tra:
+- API còn sống không
+- Bị chặn cloudflare không
+- API đổi cấu trúc chưa
+`);
   }
 
-  const last = data[data.length - 1];
+  const last =
+    history[history.length - 1];
 
-  const predict = superPredict(data);
+  const predict = superPredict(history);
 
   res.send(`
 Id: s2king
@@ -255,9 +248,9 @@ Do_tin_cay:${predict.confidence}%
 });
 
 /* =========================
-   START SERVER
+   START
 ========================= */
 
 app.listen(PORT, () => {
-  console.log("Server running:", PORT);
+  console.log("Server chạy cổng", PORT);
 });

@@ -1,7 +1,6 @@
 {
   "name": "txmd5-ai",
   "version": "1.0.0",
-  "description": "AI Tai Xiu Predictor",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
