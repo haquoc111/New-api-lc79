@@ -1,18 +1,13 @@
 {
-  "name": "LC79-ultimate",
+  "name": "txmd5-ai",
   "version": "1.0.0",
-  "description": "AI Prediction Server với MD5 tích hợp",
+  "description": "AI Tai Xiu Predictor",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "node-fetch": "^2.7.0"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "author": "s2king",
-  "license": "MIT"
+    "axios": "^1.7.2",
+    "express": "^4.19.2"
+  }
 }
