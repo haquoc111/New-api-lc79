@@ -6,11 +6,12 @@
 
 const express = require('express');
 const crypto = require('crypto');   // Dùng cho MD5
+const fetch = require('node-fetch'); // Thêm fetch cho Node.js
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // ============================================
-// HÀM MD5 ĐƠN GIẢN (tích hợp theo yêu cầu)
+// HÀM MD5 ĐƠN GIẢN
 // ============================================
 function md5(data) {
     return crypto.createHash('md5').update(data).digest('hex');
@@ -82,7 +83,7 @@ class SunwinUltimateAI {
     }
 
     // ============================================
-    // CÁC PHƯƠNG THỨC DỰ ĐOÁN (giữ nguyên)
+    // CÁC PHƯƠNG THỨC DỰ ĐOÁN (giữ nguyên, đã có sẵn)
     // ============================================
     markovPredict() {
         if (this.history.length < 4) return null;
@@ -1161,7 +1162,7 @@ class SunwinUltimateAI {
     addSession(sessionData) {
         // Chuẩn hóa dữ liệu từ API mới
         let result = sessionData.ket_qua || sessionData.result || '';
-        let normResult = result.toUpperCase();
+        let normResult = result.toString().toUpperCase();
         if (normResult === 'TAI' || normResult === 'TÀI') normResult = 'Tài';
         else if (normResult === 'XIU' || normResult === 'XỈU') normResult = 'Xỉu';
         else return;
@@ -1322,8 +1323,8 @@ app.get('/predict', (req, res) => {
             Id: 's2king',  // mẫu
             Phien: lastSession ? lastSession.id : null,
             Ket_qua: lastSession ? lastSession.result : null,
-            Xuc_xac: lastSession ? lastSession.dice.join('-') : null,
-            Phien_hien_tai: lastSession ? lastSession.id + 1 : null, // giả định phiên kế tiếp
+            Xuc_xac: lastSession && lastSession.dice ? lastSession.dice.join('-') : null,
+            Phien_hien_tai: lastSession ? (parseInt(lastSession.id) + 1) : null,
             Du_doan: prediction.prediction,
             Do_tin_cay: prediction.confidence + '%',
             md5: md5Hash
@@ -1344,9 +1345,94 @@ app.post('/fetch', async (req, res) => {
     res.json({ status: 'fetched', historySize: sunwinAI.history.length });
 });
 
+// Sửa route '/' để hiển thị giao diện đầy đủ
 app.get('/', (req, res) => {
     const stats = sunwinAI.getStats();
-    res.send(`<!DOCTYPE html>...`); // giữ nguyên giao diện HTML của bạn, có thể bổ sung MD5
+    res.send(`
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LC79 Ultimate Predictor - TELE68 AI</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background: #1a1a2e; color: #eee; }
+        .container { max-width: 800px; margin: auto; background: #16213e; padding: 20px; border-radius: 10px; }
+        h1, h2 { text-align: center; }
+        .info { background: #0f3460; padding: 15px; border-radius: 8px; margin: 10px 0; }
+        .pred { font-size: 24px; font-weight: bold; text-align: center; margin: 20px 0; }
+        .tai { color: #4caf50; }
+        .xiu { color: #f44336; }
+        .footer { text-align: center; margin-top: 30px; font-size: 12px; color: #aaa; }
+        button { background: #e94560; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+        button:hover { opacity: 0.9; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎲 LC79 Ultimate Predictor</h1>
+        <p style="text-align:center">Tích hợp MD5 | TELE68 AI | 500+ thuật toán</p>
+        
+        <div class="info">
+            <h2>📊 Thống kê</h2>
+            <p>📈 Độ chính xác: <strong>${stats.accuracy}%</strong> (${stats.totalCorrect}/${stats.totalPredictions})</p>
+            <p>📚 Lịch sử phiên: <strong>${stats.historySize}</strong></p>
+            <p>🆔 Phiên cuối: <strong>${stats.lastId || 'Chưa có'}</strong></p>
+        </div>
+
+        <div id="predictionArea">
+            <p>🔄 Đang tải dự đoán...</p>
+        </div>
+
+        <div style="text-align:center">
+            <button onclick="fetchPrediction()">🔄 Cập nhật dự đoán</button>
+            <button onclick="fetchData()">📥 Fetch dữ liệu mới</button>
+        </div>
+
+        <div class="footer">
+            🔐 MD5 Signature được tạo cho mỗi dự đoán.<br>
+            Dữ liệu tự động fetch từ TELE68 mỗi 30 giây.
+        </div>
+    </div>
+
+    <script>
+        async function fetchPrediction() {
+            try {
+                const res = await fetch('/predict');
+                const data = await res.json();
+                const area = document.getElementById('predictionArea');
+                if (data.status === 'success') {
+                    area.innerHTML = \`
+                        <div class="pred">
+                            🎯 DỰ ĐOÁN: <span class="\${data.Du_doan === 'Tài' ? 'tai' : 'xiu'}">\${data.Du_doan}</span>
+                        </div>
+                        <div>📊 Độ tin cậy: \${data.Do_tin_cay}</div>
+                        <div>🔐 MD5: \${data.md5}</div>
+                        <div>🆔 Phiên hiện tại: \${data.Phien || 'N/A'}</div>
+                        <div>🎲 Kết quả: \${data.Ket_qua || 'N/A'} (\${data.Xuc_xac || 'N/A'})</div>
+                        <div>⏩ Phiên tiếp theo: \${data.Phien_hien_tai || 'N/A'}</div>
+                    \`;
+                } else {
+                    area.innerHTML = \`<p>⏳ \${data.message}</p>\`;
+                }
+            } catch(e) { console.error(e); }
+        }
+
+        async function fetchData() {
+            try {
+                const res = await fetch('/fetch', { method: 'POST' });
+                const data = await res.json();
+                alert('Đã fetch thành công! Lịch sử: ' + data.historySize + ' phiên');
+                fetchPrediction();
+            } catch(e) { alert('Lỗi fetch: ' + e.message); }
+        }
+
+        fetchPrediction();
+        setInterval(fetchPrediction, 30000);
+    </script>
+</body>
+</html>
+    `);
 });
 
 setInterval(fetchDataFromAPI, 30000);
