@@ -119,68 +119,258 @@ function parseResultDirect(item) {
 
 function getResult(total) { return total >= 11 ? "t\u00e0i" : "x\u1ec9u"; }
 
-/* =========================
-   NHAN DIEN CAU
-========================= */
+/* =======================================================
+   NHAN DIEN CAU - THUAT TOAN NANG CAP
+   Logic chinh:
+   1. Tach lich su thanh cac block lien tiep
+   2. Nhan dien kieu cau TU LICH SU block (can 2+ chu ky)
+   3. Tinh xac suat cau van tiep hay gay
+   4. Du doan cau TIEP THEO khi cau hien tai gay
+   5. Tra ve: cau hien tai, trang thai, du doan, ly do ro rang
+======================================================= */
 
-function toSymbols(history) { return history.map((h) => (h.result === "t\u00e0i" ? "T" : "X")); }
+function toSymbols(history) { return history.map((h) => (h.result === "tài" ? "T" : "X")); }
+
+function toBlocks(arr) {
+  if (!arr.length) return [];
+  const blocks = []; let cur = { val: arr[0], len: 1 };
+  for (let i = 1; i < arr.length; i++) {
+    if (arr[i] === cur.val) cur.len++;
+    else { blocks.push(cur); cur = { val: arr[i], len: 1 }; }
+  }
+  blocks.push(cur);
+  return blocks;
+}
 
 function getCurrentStreak(symbols) {
   if (!symbols.length) return { type: null, count: 0 };
   const last = symbols[symbols.length - 1];
   let count = 0;
-  for (let i = symbols.length - 1; i >= 0; i--) { if (symbols[i]===last) count++; else break; }
-  return { type: last==="T" ? "t\u00e0i" : "x\u1ec9u", count };
+  for (let i = symbols.length - 1; i >= 0; i--) { if (symbols[i] === last) count++; else break; }
+  return { type: last === "T" ? "tài" : "xỉu", count };
 }
 
-function toBlocks(arr) {
-  if (!arr.length) return [];
-  const blocks = []; let cur = { val: arr[0], len: 1 };
-  for (let i = 1; i < arr.length; i++) { if (arr[i]===cur.val) cur.len++; else { blocks.push(cur); cur={val:arr[i],len:1}; } }
-  blocks.push(cur); return blocks;
+function flip(val) { return val === "T" ? "xỉu" : "tài"; }
+function cont(val) { return val === "T" ? "tài" : "xỉu"; }
+
+/* ---------- Nhan dien kieu cau tu block history ---------- */
+function classifyBlocks(blocks) {
+  if (blocks.length < 2) return null;
+
+  const lens = blocks.map(b => b.len);
+  const n    = lens.length;
+
+  // ---- Bet: tat ca block dai >= 4, chi 1 gia tri thay doi it
+  // Thuc ra "bet" khi block hien tai >= 4 va lich su block cung dai
+  const avgLen = lens.reduce((a,b)=>a+b,0)/n;
+
+  // Kiem tra pattern lap lai trong cac block gan nhat
+  // So sanh do lech chuan de biet cau co on dinh khong
+  const recentLens = lens.slice(-6);
+  const meanLen    = recentLens.reduce((a,b)=>a+b,0)/recentLens.length;
+  const stdLen     = Math.sqrt(recentLens.reduce((s,l)=>s+Math.pow(l-meanLen,2),0)/recentLens.length);
+
+  // Cau 1-1: tat ca block dai 1
+  if (recentLens.every(l=>l===1)) return { type:"1-1", cycleLen:1, confirmed: n>=6 };
+
+  // Cau 2-2: tat ca block dai 2
+  if (recentLens.every(l=>l===2)) return { type:"2-2", cycleLen:2, confirmed: n>=4 };
+
+  // Cau 3-3: tat ca block dai 3
+  if (recentLens.every(l=>l===3)) return { type:"3-3", cycleLen:3, confirmed: n>=4 };
+
+  // Cau 4-4: tat ca block dai 4
+  if (recentLens.every(l=>l===4)) return { type:"4-4", cycleLen:4, confirmed: n>=3 };
+
+  // Cau 2-1 hoac 1-2: xen ke 2 va 1
+  if (recentLens.every(l=>l===1||l===2)) {
+    const pattern = recentLens.slice(-4).join("-");
+    return { type:"2-1", cycleLen:2, confirmed: n>=5, pattern };
+  }
+
+  // Cau 3-1 hoac 1-3
+  if (recentLens.every(l=>l===1||l===3)) return { type:"3-1", cycleLen:3, confirmed: n>=4 };
+
+  // Cau 3-2 hoac 2-3
+  if (recentLens.every(l=>l===2||l===3)) return { type:"3-2", cycleLen:3, confirmed: n>=4 };
+
+  // Cau bet dai (block hien tai >= 5, lich su cung co block dai)
+  if (avgLen >= 3.5 && stdLen <= 1.5) return { type:`bet-${Math.round(avgLen)}`, cycleLen:Math.round(avgLen), confirmed: n>=3 };
+
+  // Cau khong ro
+  return { type:"random", cycleLen:0, confirmed: false };
 }
 
-function detectPattern(history) {
-  if (history.length < 4)
-    return { pattern:"ch\u01b0a \u0111\u1ee7 d\u1eef li\u1ec7u", description:"C\u1ea7n th\u00eam phi\u00ean", confidence:50, nextPrediction:null };
+/* ---------- Tinh xac suat cau gay dua tren lich su ---------- */
+function calcBreakProb(blocks, cauType) {
+  if (blocks.length < 4) return 0.3;
 
-  const syms   = toSymbols(history);
-  const recent = syms.slice(-12);
+  const curBlock = blocks[blocks.length - 1];
+  const curLen   = curBlock.len;
 
-  if (recent.every((s) => s===recent[0])) {
-    const streak = getCurrentStreak(syms);
-    return {
-      pattern:`c\u1ea7u b\u1ec7t ${streak.type} (${streak.count} phi\u00ean)`,
-      description:`\u0110ang b\u1ec7t ${streak.type} li\u00ean ti\u1ebfp ${streak.count} phi\u00ean`,
-      confidence: streak.count>=5?60:75,
-      nextPrediction: streak.count>=5?(streak.type==="t\u00e0i"?"x\u1ec9u":"t\u00e0i"):streak.type,
-    };
+  // Lay tat ca block cung gia tri de tinh phan phoi do dai
+  const sameValBlocks = blocks.slice(0,-1).filter(b => b.val === curBlock.val).map(b => b.len);
+  if (!sameValBlocks.length) return 0.3;
+
+  const avgBlockLen = sameValBlocks.reduce((a,b)=>a+b,0) / sameValBlocks.length;
+  const maxBlockLen = Math.max(...sameValBlocks);
+
+  // Xac suat gay tang khi block hien tai qua dai so voi trung binh
+  if (curLen >= maxBlockLen)       return 0.80; // da qua max lich su => rat co the gay
+  if (curLen >= avgBlockLen * 1.5) return 0.70;
+  if (curLen >= avgBlockLen)       return 0.55;
+  if (curLen >= avgBlockLen * 0.8) return 0.40;
+  return 0.25; // con ngan, nhieu kha nang tiep tuc
+}
+
+/* ---------- Du doan cau tiep theo se la gi sau khi gay ---------- */
+function predictNextPattern(blocks, cauType) {
+  // Phan tich do dai cac chu ky truoc
+  // Muc tieu: khi cau A gay, cau B tiep theo thuong la gi?
+
+  if (blocks.length < 4) return { nextType:"khong ro", confidence:50 };
+
+  const lens = blocks.slice(-8).map(b => b.len);
+
+  // Tinh tan suat xuat hien do dai block
+  const freq = {};
+  lens.forEach(l => { freq[l] = (freq[l]||0)+1; });
+  const sortedLens = Object.entries(freq).sort((a,b)=>b[1]-a[1]);
+  const mostCommon = Number(sortedLens[0][0]);
+
+  // Neu cau hien tai la bet dai => sau khi gay thuong ra 1-1
+  if (cauType && cauType.startsWith("bet") || blocks[blocks.length-1].len >= 4) {
+    return { nextType:"1-1 hoac 2-2", confidence:65 };
   }
 
-  const last8 = recent.slice(-8);
-  let isAlt = last8.length >= 6;
-  for (let i=1; i<last8.length; i++) { if (last8[i]===last8[i-1]) { isAlt=false; break; } }
-  if (isAlt) return { pattern:"c\u1ea7u 1-1 (xen k\u1ebd)", description:"T\u00e0i X\u1ec9u \u0111an xen \u0111\u1ec1u \u0111\u1eb7n", confidence:82,
-                      nextPrediction: last8[last8.length-1]==="T"?"x\u1ec9u":"t\u00e0i" };
+  // Neu cau 1-1 => thuong chuyen sang 2-2 hoac bet ngan
+  if (cauType === "1-1") return { nextType:"2-2 hoac bet", confidence:60 };
 
-  const blocks = toBlocks(recent);
-  if (blocks.length >= 4) {
-    const lens = blocks.slice(-4).map((b) => b.len);
-    const last = blocks[blocks.length - 1];
-    const flip = last.val==="T"?"x\u1ec9u":"t\u00e0i";
-    const cont = last.val==="T"?"t\u00e0i":"x\u1ec9u";
+  // Neu cau 2-2 => thuong chuyen sang 1-1 hoac 3-3
+  if (cauType === "2-2") return { nextType:"1-1 hoac 3-3", confidence:62 };
 
-    if (lens.every((l)=>l===2)) return { pattern:"c\u1ea7u 2-2", description:"C\u1eb7p 2 xen k\u1ebd", confidence:80, nextPrediction:flip };
-    if (lens.every((l)=>l===3)) return { pattern:"c\u1ea7u 3-3", description:"Nh\u00f3m 3 xen k\u1ebd", confidence:78, nextPrediction:flip };
-    if (lens.every((l)=>l===3||l===4)) return { pattern:"c\u1ea7u 3-4", description:"Nh\u00f3m 3-4 xen k\u1ebd", confidence:72, nextPrediction: last.len>=3?flip:cont };
-    if (lens[0]===1&&lens[1]===2&&lens[2]===1&&lens[3]===2) return { pattern:"c\u1ea7u 1-2", description:"\u0110\u01a1n r\u1ed3i c\u1eb7p xen k\u1ebd", confidence:72, nextPrediction:flip };
-    if (lens[0]===2&&lens[1]===1&&lens[2]===2&&lens[3]===1) return { pattern:"c\u1ea7u 2-1", description:"C\u1eb7p r\u1ed3i \u0111\u01a1n xen k\u1ebd", confidence:72, nextPrediction: last.len>=2?flip:cont };
-    if (lens.every((l)=>l===1||l===2)) return { pattern:"c\u1ea7u 2-1", description:"Xen k\u1ebd c\u1eb7p v\u00e0 \u0111\u01a1n", confidence:68, nextPrediction: last.len>=2?flip:cont };
+  // Neu cau 3-3 => thuong chuyen sang 2-2 hoac 1-1
+  if (cauType === "3-3") return { nextType:"1-1 hoac 2-2", confidence:60 };
+
+  return { nextType:"khong ro", confidence:50 };
+}
+
+/* ---------- Ham tong hop phan tich cau ---------- */
+function analyzePattern(history) {
+  if (history.length < 6)
+    return { cauHienTai:"chua du lieu", trangThai:"can them phien", xacNhan:false,
+             breakProb:0, duDoanCau:"?", nextPatternInfo:"?", nextPrediction:null, confidence:50, reason:"" };
+
+  const syms      = toSymbols(history);
+  const blocks    = toBlocks(syms);
+  const curBlock  = blocks[blocks.length - 1];
+  const curStreak = getCurrentStreak(syms);
+
+  const cauInfo   = classifyBlocks(blocks);
+  const cauType   = cauInfo ? cauInfo.type : "random";
+  const confirmed = cauInfo ? cauInfo.confirmed : false;
+
+  const breakProb      = calcBreakProb(blocks, cauType);
+  const nextPatternInfo= predictNextPattern(blocks, cauType);
+
+  // --- Quyet dinh du doan phien toi ---
+  let nextPrediction, reason, confidence;
+
+  // TRUONG HOP 1: Cau xac nhan ro rang, xac suat gay thap => di tiep theo cau
+  if (confirmed && breakProb < 0.45) {
+    // Tinh phien hien tai trong chu ky la bao nhieu
+    const cyclePos = cauInfo.cycleLen > 0 ? (curBlock.len % cauInfo.cycleLen) : curBlock.len;
+
+    if (cauType === "1-1") {
+      nextPrediction = flip(curBlock.val);
+      reason = `Cau 1-1 xac nhan (${blocks.length} chu ky) => doi sang ${nextPrediction}`;
+      confidence = confirmed ? 82 : 68;
+    } else if (cauType === "2-2") {
+      nextPrediction = curBlock.len >= 2 ? flip(curBlock.val) : cont(curBlock.val);
+      reason = curBlock.len >= 2
+        ? `Cau 2-2 xac nhan, block hien tai du 2 => doi sang ${nextPrediction}`
+        : `Cau 2-2 xac nhan, block hien tai moi 1 => tiep ${nextPrediction}`;
+      confidence = confirmed ? 80 : 66;
+    } else if (cauType === "3-3") {
+      nextPrediction = curBlock.len >= 3 ? flip(curBlock.val) : cont(curBlock.val);
+      reason = curBlock.len >= 3
+        ? `Cau 3-3 xac nhan, block hien tai du 3 => doi sang ${nextPrediction}`
+        : `Cau 3-3 xac nhan, con ${3-curBlock.len} phien nua moi doi`;
+      confidence = confirmed ? 78 : 64;
+    } else if (cauType === "4-4") {
+      nextPrediction = curBlock.len >= 4 ? flip(curBlock.val) : cont(curBlock.val);
+      reason = curBlock.len >= 4
+        ? `Cau 4-4 xac nhan, block hien tai du 4 => doi sang ${nextPrediction}`
+        : `Cau 4-4 xac nhan, con ${4-curBlock.len} phien nua moi doi`;
+      confidence = 76;
+    } else if (cauType === "2-1" || cauType === "3-1" || cauType === "3-2") {
+      // Lay lens 2 block cuoi de biet vi tri trong chu ky
+      const prevBlock = blocks[blocks.length - 2];
+      if (cauType === "2-1") {
+        if (prevBlock.len === 2 && curBlock.len >= 1) {
+          nextPrediction = cont(curBlock.val); // block ngan 1 van tiep
+          reason = `Cau 2-1: block truoc dai 2, block nay moi ${curBlock.len} => tiep ${nextPrediction}`;
+          if (curBlock.len >= 1 && prevBlock.len === 1) { nextPrediction = flip(curBlock.val); reason = `Cau 2-1: block don xong => doi sang ${nextPrediction}`; }
+        } else {
+          nextPrediction = curBlock.len >= 2 ? flip(curBlock.val) : cont(curBlock.val);
+          reason = `Cau 2-1 => ${nextPrediction}`;
+        }
+      } else {
+        nextPrediction = curBlock.len >= cauInfo.cycleLen ? flip(curBlock.val) : cont(curBlock.val);
+        reason = `Cau ${cauType} => ${nextPrediction}`;
+      }
+      confidence = confirmed ? 74 : 62;
+    } else if (cauType.startsWith("bet")) {
+      // Bet on dinh => di tiep, nhung theo doi nguy co gay
+      nextPrediction = cont(curBlock.val);
+      reason = `Cau bet on dinh (trung binh ${cauInfo.cycleLen} phien/block) => tiep ${nextPrediction}`;
+      confidence = 65;
+    } else {
+      nextPrediction = cont(curBlock.val);
+      reason = `Cau chua ro, theo streak hien tai`;
+      confidence = 55;
+    }
   }
 
-  const streak = getCurrentStreak(syms);
-  if (streak.count >= 2) return { pattern:`c\u1ea7u b\u1ec7t nh\u1eb9 (${streak.count} phi\u00ean)`, description:`${streak.type} ch\u1ea1y ${streak.count} phi\u00ean`, confidence:62, nextPrediction:streak.type };
-  return { pattern:"c\u1ea7u ng\u1eabu nhi\u00ean", description:"Kh\u00f4ng c\u00f3 pattern r\u00f5 r\u00e0ng", confidence:52, nextPrediction:null };
+  // TRUONG HOP 2: Xac suat gay cao => du doan gay (doi chieu)
+  else if (breakProb >= 0.65) {
+    nextPrediction = flip(curBlock.val);
+    reason = `CAY GAY: block hien tai ${curBlock.len} phien (qua dai so voi lich su) => du doan doi sang ${nextPrediction}`;
+    confidence = Math.floor(55 + breakProb * 25);
+  }
+
+  // TRUONG HOP 3: Vung xam - chua chac chan
+  else {
+    // Dung Markov de quyet dinh
+    const lastResult = history[history.length-1].result;
+    let same=0, chg=0;
+    const allSyms = syms;
+    for (let i=1; i<allSyms.length; i++) {
+      if (allSyms[i-1] === allSyms[allSyms.length-1]) {
+        if (allSyms[i] === allSyms[allSyms.length-1]) same++; else chg++;
+      }
+    }
+    nextPrediction = chg > same ? flip(curBlock.val) : cont(curBlock.val);
+    reason = `Vung xam (xac suat gay ${Math.floor(breakProb*100)}%) => Markov cho ${nextPrediction}`;
+    confidence = 58;
+  }
+
+  // Tang confidence khi nhieu thuat toan dong thuan
+  const cauStr = cauInfo
+    ? `${cauInfo.type}${confirmed ? " (XAC NHAN)" : " (THEO DOI)"}`
+    : "random";
+
+  return {
+    cauHienTai:    cauStr,
+    trangThai:     confirmed ? "xac nhan" : "chua xac nhan",
+    xacNhan:       confirmed,
+    cauLen:        curBlock.len,
+    breakProb:     Math.floor(breakProb * 100),
+    duDoanCauTiepTheo: nextPatternInfo.nextType,
+    nextPrediction,
+    confidence,
+    reason,
+  };
 }
 
 /* =========================
@@ -188,9 +378,9 @@ function detectPattern(history) {
 ========================= */
 
 function diceAnalysis(history) {
-  const valid = history.filter((h) => h.hasRealDice);
-  const src   = valid.length >= 3 ? valid : history;
-  if (src.length < 3) return { prediction:null, confidence:50, note:"Ch\u01b0a \u0111\u1ee7 d\u1eef li\u1ec7u", avgTotal:"?" };
+  const valid    = history.filter((h) => h.hasRealDice);
+  const src      = valid.length >= 3 ? valid : history;
+  if (src.length < 3) return { prediction:null, confidence:50, note:"Chua du lieu", avgTotal:"?" };
 
   const recent   = src.slice(-5);
   const avgTotal = recent.reduce((s,h) => s+h.total, 0) / recent.length;
@@ -201,17 +391,28 @@ function diceAnalysis(history) {
   const isHighDice  = last.hasRealDice && last.dices.every((d) => d >= 4);
   const isLowDice   = last.hasRealDice && last.dices.every((d) => d <= 3);
 
+  // Xu huong tong 3 phien lien tiep
+  const last3      = src.slice(-3);
+  const trendUp    = last3.length===3 && last3[2].total > last3[1].total && last3[1].total > last3[0].total;
+  const trendDown  = last3.length===3 && last3[2].total < last3[1].total && last3[1].total < last3[0].total;
+
   let note=[], score=0;
-  if (isTriplet)   { note.push(`B\u1ed9 ba ${last.dices[0]}-${last.dices[0]}-${last.dices[0]} => th\u01b0\u1eddng \u0111\u1ea3o chi\u1ec1u`); score += last.result==="t\u00e0i"?-30:30; }
-  if (avgTotal>10.5){ note.push(`TB ${avgTotal.toFixed(1)} > 10.5 => ngh\u00ecng t\u00e0i`);  score+=15; }
-  else              { note.push(`TB ${avgTotal.toFixed(1)} \u2264 10.5 => ngh\u00ecng x\u1ec9u`); score-=15; }
-  if (isHighDice)   { note.push("C\u1ea3 3 x\u00fac x\u1eafc cao (\u22654) => ngh\u00ecng t\u00e0i");  score+=20; }
-  if (isLowDice)    { note.push("C\u1ea3 3 x\u00fac x\u1eafc th\u1ea5p (\u22643) => ngh\u00ecng x\u1ec9u"); score-=20; }
-  if (isEvenTotal)  { note.push("T\u1ed5ng ch\u1eb5n => ngh\u00ecng l\u1ebb ti\u1ebfp");  score-=5; }
-  else              { note.push("T\u1ed5ng l\u1ebb => ngh\u00ecng ch\u1eb5n ti\u1ebfp"); score+=5; }
+
+  if (isTriplet) {
+    note.push(`Bo ba ${last.dices[0]}-${last.dices[0]}-${last.dices[0]} => thuong dao chieu`);
+    score += last.result==="tài" ? -35 : 35;
+  }
+  if (avgTotal > 10.5) { note.push(`TB5 ${avgTotal.toFixed(1)} cao => nghieng tai`);  score+=15; }
+  else                 { note.push(`TB5 ${avgTotal.toFixed(1)} thap => nghieng xiu`); score-=15; }
+  if (isHighDice)      { note.push("Ca3 xuc xac cao(>=4) => tai");  score+=20; }
+  if (isLowDice)       { note.push("Ca3 xuc xac thap(<=3) => xiu"); score-=20; }
+  if (trendUp)         { note.push("Tong tang lien tiep 3 phien => nghieng tai"); score+=12; }
+  if (trendDown)       { note.push("Tong giam lien tiep 3 phien => nghieng xiu"); score-=12; }
+  if (isEvenTotal)     { note.push("Tong chan => nhe nghieng le tiep");  score-=5; }
+  else                 { note.push("Tong le => nhe nghieng chan tiep"); score+=5; }
 
   return {
-    prediction: score>=0?"t\u00e0i":"x\u1ec9u",
+    prediction: score>=0 ? "tài" : "xỉu",
     confidence: Math.floor(Math.min(85, 50+Math.abs(score)/2)),
     note:       note.join(" | "),
     avgTotal:   avgTotal.toFixed(1),
@@ -220,32 +421,76 @@ function diceAnalysis(history) {
 }
 
 /* =========================
-   THUAT TOAN GOC
+   TONG HOP DU DOAN CUOI
 ========================= */
 
-function trendPredict(h) {
-  let t=0,x=0; h.slice(-10).forEach((i)=>{if(i.result==="t\u00e0i")t++;else x++;});
-  return t>x?{prediction:"x\u1ec9u",confidence:70}:{prediction:"t\u00e0i",confidence:70};
-}
-function streakPredict(h) {
-  const last=h[h.length-1]; let s=1;
-  for(let i=h.length-2;i>=0;i--){if(h[i].result===last.result)s++;else break;}
-  return s>=3?{prediction:last.result==="t\u00e0i"?"x\u1ec9u":"t\u00e0i",confidence:85}:{prediction:last.result,confidence:60};
-}
-function markovPredict(h) {
-  if(h.length<5)return{prediction:"t\u00e0i",confidence:50};
-  const last=h[h.length-1].result; let same=0,chg=0;
-  for(let i=1;i<h.length;i++){if(h[i-1].result===last){if(h[i].result===last)same++;else chg++;}}
-  return chg>same?{prediction:last==="t\u00e0i"?"x\u1ec9u":"t\u00e0i",confidence:75}:{prediction:last,confidence:75};
-}
-
 function superPredict(history) {
-  const algos=[trendPredict(history),streakPredict(history),markovPredict(history)];
-  const pi=detectPattern(history);  if(pi.nextPrediction) algos.push({prediction:pi.nextPrediction,confidence:pi.confidence});
-  const di=diceAnalysis(history);   if(di.prediction)     algos.push({prediction:di.prediction,    confidence:di.confidence});
-  let t=0,x=0; algos.forEach((a)=>{if(a.prediction==="t\u00e0i")t+=a.confidence;else x+=a.confidence;});
-  const conf=Math.min(Math.floor((Math.max(t,x)/(t+x))*100),95);
-  return{prediction:t>x?"t\u00e0i":"x\u1ec9u",confidence:conf,patternInfo:pi,diceInfo:di};
+  const pa = analyzePattern(history);
+  const di = diceAnalysis(history);
+
+  // Bo phieu co trong so:
+  // - Cau xac nhan: trong so cao nhat (x3)
+  // - Cau chua xac nhan: trong so binh thuong (x1.5)
+  // - Xuc xac: trong so trung binh (x1.5)
+  // - Markov nhanh: trong so thap (x1)
+
+  const votes = [];
+
+  // Phieu tu phan tich cau (trong so cao nhat)
+  if (pa.nextPrediction) {
+    const w = pa.xacNhan ? 3.0 : 1.5;
+    votes.push({ prediction: pa.nextPrediction, confidence: pa.confidence, weight: w, src: "cau" });
+  }
+
+  // Phieu tu xuc xac
+  if (di.prediction) {
+    votes.push({ prediction: di.prediction, confidence: di.confidence, weight: 1.5, src: "xuc_xac" });
+  }
+
+  // Markov tren 20 phien gan nhat
+  const syms = toSymbols(history);
+  const last20 = syms.slice(-20);
+  const lastSym = last20[last20.length-1];
+  let mSame=0, mChg=0;
+  for (let i=1; i<last20.length; i++) {
+    if (last20[i-1]===lastSym) { if(last20[i]===lastSym) mSame++; else mChg++; }
+  }
+  const mPred = mChg>mSame ? flip(lastSym) : cont(lastSym);
+  const mConf = 50 + Math.abs(mChg-mSame) * 3;
+  votes.push({ prediction: mPred, confidence: Math.min(mConf,75), weight: 1.0, src: "markov" });
+
+  // Xu huong 10 phien
+  const last10 = history.slice(-10);
+  const taiCount = last10.filter(h=>h.result==="tài").length;
+  const xiuCount = 10 - taiCount;
+  // Nguoc lai xu huong (mean reversion)
+  const trendPred = taiCount > xiuCount ? "xỉu" : "tài";
+  votes.push({ prediction: trendPred, confidence: 55+Math.abs(taiCount-xiuCount)*2, weight: 0.8, src: "trend" });
+
+  // Tinh tong diem co trong so
+  let scoreTai=0, scoreXiu=0;
+  votes.forEach(v => {
+    const w = v.weight * v.confidence;
+    if (v.prediction==="tài") scoreTai+=w; else scoreXiu+=w;
+  });
+
+  const total     = scoreTai + scoreXiu;
+  const winner    = scoreTai > scoreXiu ? "tài" : "xỉu";
+  const rawConf   = Math.floor((Math.max(scoreTai,scoreXiu)/total)*100);
+  const finalConf = Math.min(rawConf, 93);
+
+  // Kiem tra dong thuan: neu cau va xuc xac cung chieu => tang confidence
+  const cauVote  = votes.find(v=>v.src==="cau");
+  const diceVote = votes.find(v=>v.src==="xuc_xac");
+  const bonus    = (cauVote && diceVote && cauVote.prediction===diceVote.prediction && pa.xacNhan) ? 3 : 0;
+
+  return {
+    prediction: winner,
+    confidence: Math.min(finalConf + bonus, 93),
+    patternAnalysis: pa,
+    diceInfo: di,
+    votes,
+  };
 }
 
 /* =========================
@@ -319,7 +564,7 @@ app.get("/", async(req,res) => {
 
   const noDice = history.filter((h)=>!h.hasRealDice).length;
   const warn   = noDice===history.length
-    ? "\n[!] API khong tra ve xuc xac â chi du doan tu ket qua tai/xiu. Xem /debug\n"
+    ? "\n[!] API khong tra ve xuc xac — chi du doan tu ket qua tai/xiu. Xem /debug\n"
     : "";
 
   const last    = history[history.length-1];
