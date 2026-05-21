@@ -280,7 +280,7 @@ async function getData() {
     if(!arr.length){ console.log("No array. Keys:", Object.keys(raw||{})); return []; }
     console.log(`Found ${arr.length} items. item[0]:`, JSON.stringify(arr[0]).slice(0,400));
 
-    return arr.map((item) => {
+    const mapped = arr.map((item) => {
       const dices       = parseDices(item);
       const session     = parseSession(item);
       const hasRealDice = dices !== null;
@@ -291,6 +291,19 @@ async function getData() {
       const result      = direct || getResult(total);
       return{id:"s2king",session,dices:[d1,d2,d3],total,result,hasRealDice};
     });
+
+    // Xac dinh thu tu: neu session[0] > session[1] thi API tra moi nhat truoc => can reverse
+    // de history[last] luon la phien moi nhat
+    if (mapped.length >= 2) {
+      const s0 = Number(mapped[0].session);
+      const s1 = Number(mapped[mapped.length - 1].session);
+      if (s0 > s1) {
+        mapped.reverse();
+        console.log("Array reversed: API tra moi nhat truoc, da dao nguoc de [last]=moi nhat");
+      }
+    }
+
+    return mapped;
   } catch(err) {
     console.log("ERROR:", err.response?.data||err.message); return [];
   }
