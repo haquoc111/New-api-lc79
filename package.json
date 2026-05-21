@@ -1,12 +1,19 @@
 {
-  "name": "txmd5-ai",
+  "name": "s2king-taixiu",
   "version": "1.0.0",
+  "description": "Dự đoán Tài/Xỉu với phân tích cầu, xúc xắc và thuật toán tổng hợp",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev": "nodemon server.js"
   },
   "dependencies": {
-    "axios": "^1.7.2",
-    "express": "^4.19.2"
-  }
+    "axios": "^1.6.0",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "author": "s2king",
+  "license": "ISC"
 }
